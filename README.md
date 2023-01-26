@@ -1,6 +1,6 @@
-# project-c-code
-+ Code for the project c) - combination of project a and project b
-+ Project A code was borrowed from https://github.com/amineKili/ClassificationForTrading 
-+ Project B code was borrowed from https://github.com/CoderOfJava8888/Project_A_consolidate 
+# Interactive Broker with Machine Learning integration
++ Code - combination of Interactive Broker and Machine Learning source code. 
++ Machine Learning code was borrowed from https://github.com/amineKili/ClassificationForTrading 
++ Interactive Broker code was borrowed from https://github.com/CoderOfJava8888/Project_A_consolidate 
 
 
