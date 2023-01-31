@@ -1,5 +1,6 @@
 package projectb.strategy;
 
+import projecta.aitrading.EntryPointRandomForestTrainTest;
 import projecta.aitrading.model.modelSerializer.RandomForestModelSerializer;
 import projecta.aitrading.utils.LoggingUtils;
 import projectb.ib.client.Bar;
@@ -45,6 +46,7 @@ public class NewStrategy {
 
     public String executionDeterminer(ArrayList<Bar> barInput) throws InterruptedException {  // throws InterruptedException {
         Instant instant = Instant.now();
+        String prediction = "";
         int min = instant.atZone(ZoneOffset.UTC).getMinute();
         if (min >= 0 && min <= 2) {
             minute = 0;
@@ -117,7 +119,9 @@ public class NewStrategy {
             System.out.println("tesla9  " + tesla9);
             System.out.println("signal  " + signalDecision);
 
-            DataFrame inputDF = constructInputDataFrame(1, barInput.get(b12).wap(), barInput.get(b12).count(),
+
+            DataFrame inputDF = constructInputDataFrame(1, barInput.get(b12).open(),
+                    barInput.get(b12).high(), barInput.get(b12).low(), barInput.get(b12).close(), barInput.get(b12).wap(), barInput.get(b12).count(),
                     minute, tesla3, tesla6, tesla9, convertDecisionToInteger(signalDecision));
 
             Tuple inputDataFrame = inputDF.get(0);
@@ -125,27 +129,29 @@ public class NewStrategy {
             if (randomForestModelSerializer != null) {
                 RandomForest randomForest = randomForestModelSerializer.getRandomForest();
                 var predictionInteger = randomForest.predict(inputDataFrame);
-                String prediction = predictionInteger == 0 ? "NO" : "EXECUTE";
-                System.out.println("The predicted decision is " + prediction);
+                prediction = predictionInteger == 0 ? "NO" : "EXECUTE";
             }
-
 
 //        LiveBarPriorClassification test = new LiveBarPriorClassification(barInput.get(12).volume(), barInput.get(12).count(), barInput.get(12).wap(), tesla3, tesla6, tesla9, signalDecision);
 //TEMPORARY -
-
-
         }
 
 //TEMPORARY -    ERASE/EDIT BELOW
 //  GOAL IS TO OBTAIN EXECUTE OR NO RETURN FROM MACHINE LEARNING PIECE.
-        String executionOrNo = signalDecision;  //  <--- This is temporary.  Need link here to ML piece
+        
+        boolean execute = prediction.equals("EXECUTE");
+        String executionOrNo = execute ? signalDecision : "NO";  //  <--- This is temporary.  Need link here to ML piece
         barInput.clear();
         return executionOrNo;
 
     }
 
-    private DataFrame constructInputDataFrame(int executeValue, double wapValue, double countValue, double minuteValue, double tesla3Value, double tesla6Value, double tesla9Value, double decisionInteger) {
+    private DataFrame constructInputDataFrame(int executeValue, double open, double high, double low, double close, double wapValue, double countValue, double minuteValue, double tesla3Value, double tesla6Value, double tesla9Value, double decisionInteger) {
         int[][] inputExecute = {{executeValue}};
+        double [][] inputOpen = {{open}};
+        double [][] inputHigh = {{high}};
+        double [][] inputLow = {{low}};
+        double [][] inputClose = {{close}};
         double[][] inputWAP = {{wapValue}};
         double[][] inputCount = {{countValue}};
         double[][] inputMinute = {{minuteValue}};
@@ -154,6 +160,10 @@ public class NewStrategy {
         double[][] inputTesla9 = {{tesla9Value}};
         double[][] decision = {{decisionInteger}};
         DataFrame executeDF = DataFrame.of(inputExecute, "EXECUTE");
+        DataFrame openDF = DataFrame.of(inputOpen, "Open");
+        DataFrame highDF = DataFrame.of(inputHigh, "High");
+        DataFrame lowDF = DataFrame.of(inputLow, "Low");
+        DataFrame closeDF = DataFrame.of(inputClose, "Close");
         DataFrame wapDF = DataFrame.of(inputWAP, "WAP");
         DataFrame countDF = DataFrame.of(inputCount, "Count");
         DataFrame minuteDF = DataFrame.of(inputMinute, "Minute");
@@ -161,7 +171,7 @@ public class NewStrategy {
         DataFrame tesla6DF = DataFrame.of(inputTesla6, "Tesla6");
         DataFrame tesla9DF = DataFrame.of(inputTesla9, "Tesla9");
         DataFrame decisionDF = DataFrame.of(decision, "Decision");
-        return executeDF.merge(wapDF, countDF, minuteDF, tesla3DF, tesla6DF, tesla9DF, decisionDF);
+        return executeDF.merge(openDF, highDF, lowDF, closeDF, wapDF, countDF, minuteDF, tesla3DF, tesla6DF, tesla9DF, decisionDF);
     }
 
     public double convertDecisionToInteger(String signalDecision) {

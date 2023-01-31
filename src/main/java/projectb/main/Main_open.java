@@ -4,10 +4,13 @@ package projectb.main;
    version98501_IBKR_Implementation
  */
 
+import projecta.aitrading.EntryPointGradientBoostedTreesTrainTest;
+import projecta.aitrading.EntryPointMultiLayerNNTrainTest;
+import projecta.aitrading.EntryPointRandomForestTrainTest;
 import projectb.ib.client.*;
 import projectb.contracts.*;
-import projectb.helpers.Portfolio_Assessment;
-import projectb.helpers.Position_Processor;
+import projectb.ib.helpers.Portfolio_Assessment;
+import projectb.ib.helpers.Position_Processor;
 import projectb.strategy.NewStrategy;
 
 import java.util.*;
@@ -16,7 +19,9 @@ import java.util.concurrent.TimeUnit;
 public class Main_open {
 
     public static void main(String[] args) throws InterruptedException {
-
+        //EntryPointMultiLayerNNTrainTest.trainAndTestModel();
+        //EntryPointGradientBoostedTreesTrainTest.trainAndTestModel();
+        EntryPointRandomForestTrainTest.trainAndTestModel(); // Train and test model
         //TimeUnit.SECONDS.sleep(60);  // 60 second pause when incorporating Windows Task Scheduler to activate IbcAlpha https://github.com/IbcAlpha/IBC
         //TimeUnit.SECONDS.sleep(30);  // 30 second pause when incorporating Windows Task Scheduler to activate IbcAlpha https://github.com/IbcAlpha/IBC
         EWrapper_Implementation wrapper = new EWrapper_Implementation();

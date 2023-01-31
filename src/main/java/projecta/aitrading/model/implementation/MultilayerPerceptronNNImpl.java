@@ -20,6 +20,7 @@ import smile.validation.ClassificationValidation;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.text.MessageFormat;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -34,8 +35,8 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
     // initialized in static initialisation block
     public static final long[] seeds;
 
-    private final String trainingPath;
-    private final String testingPath;
+    private final List<String> trainingPath;
+    private final List<String> testingPath;
     private final String modelPath;
     private MLP model;
     private final List<Pair<String, Predicate<Double>>> predicatePerColumn;
@@ -64,7 +65,7 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
 
     }
 
-    public MultilayerPerceptronNNImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
+    public MultilayerPerceptronNNImpl(List<String> trainDataSetPath, List<String> testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
         MathEx.setSeed(19650218);
         this.trainingPath = trainDataSetPath;
         this.testingPath = testDateSetPath;
@@ -80,24 +81,24 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      */
     public void train() throws IOException, URISyntaxException {
         LoggingUtils.print("Start training");
-        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "TRAINING");
+        List<DataFrame> trainingData = getDataFrameReady(trainingPath, "TRAINING");
 
-        var net = new MLP(inputColumns.length,
-                Layer.sigmoid(numberOfClasses),
-                Layer.mle(1, OutputFunction.SIGMOID)
-        );
+        for (DataFrame byteOnlyData: trainingData) {
+            var net = new MLP(inputColumns.length,
+                    Layer.sigmoid(numberOfClasses),
+                    Layer.mle(1, OutputFunction.SIGMOID)
+            );
+            net.setLearningRate(TimeFunction.constant(learningRate));
+            net.setMomentum(TimeFunction.constant(momentum));
 
-        net.setLearningRate(TimeFunction.constant(learningRate));
-        net.setMomentum(TimeFunction.constant(momentum));
+            var pairTraining = getDataFrameAsArray(byteOnlyData);
+            for (int currentEpoch = 0; currentEpoch < epoch; currentEpoch++) {
+                net.update(pairTraining.getFirst(), pairTraining.getSecond());
+            }
 
-
-        var pairTraining = getDataFrameAsArray(byteOnlyData);
-        for (int currentEpoch = 0; currentEpoch < epoch; currentEpoch++) {
-            net.update(pairTraining.getFirst(), pairTraining.getSecond());
+            LoggingUtils.print("Finished training");
+            this.model = net;
         }
-
-        LoggingUtils.print("Finished training");
-        this.model = net;
         MultiLayerPerceptronSerializer multiLayerPerceptronSerializer = new MultiLayerPerceptronSerializer(this.model);
         saveModelToFile(multiLayerPerceptronSerializer);
     }
@@ -121,28 +122,30 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void test() throws IOException, URISyntaxException {
-        var dataFrame = getDataFrameReady(testingPath, "TEST");
 
-        var predictedStr = new String[dataFrame.size()];
-        var actualStr = new String[dataFrame.size()];
-        var pair = getDataFrameAsArray(dataFrame);
+        var dataFrameList = getDataFrameReady(testingPath, "TEST");
+        for (DataFrame dataFrame: dataFrameList) {
+            var predictedStr = new String[dataFrame.size()];
+            var actualStr = new String[dataFrame.size()];
+            var pair = getDataFrameAsArray(dataFrame);
 
-        for (int i = 0; i < dataFrame.size(); i++) {
-            var row = dataFrame.get(i);
-            var input = pair.getFirst()[i];
+            for (int i = 0; i < dataFrame.size(); i++) {
+                var row = dataFrame.get(i);
+                var input = pair.getFirst()[i];
 
-            var prediction = model.predict(input);
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
+                var prediction = model.predict(input);
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
 
-            predictedStr[i] = predictedStringCategory;
-            actualStr[i] = actualStringCategory;
+                predictedStr[i] = predictedStringCategory;
+                actualStr[i] = actualStringCategory;
 
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
+
+            var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
+            LoggingUtils.print(confusionMatrix.toString());
         }
-
-        var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
-        LoggingUtils.print(confusionMatrix.toString());
     }
 
     /**
@@ -152,39 +155,41 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
-        DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
 
-        var pairTrainingData = getDataFrameAsArray(byteOnlyTrainingData);
-        var pairTestData = getDataFrameAsArray(byteOnlyTestData);
+        List<DataFrame> trainingDataList = getDataFrameReady(trainingPath, "Evaluation");
+        List<DataFrame> testDataList = getDataFrameReady(testingPath, "Evaluation");
+        for (int j = 0; j < trainingDataList.size(); j++){
+            DataFrame byteOnlyTrainingData = trainingDataList.get(j);
+            DataFrame byteOnlyTestData = testDataList.get(j);
+            var pairTrainingData = getDataFrameAsArray(byteOnlyTrainingData);
+            var pairTestData = getDataFrameAsArray(byteOnlyTestData);
 
+            var classificationValidation = ClassificationValidation.of(
+                    pairTrainingData.getFirst(), pairTrainingData.getSecond(), pairTestData.getFirst(), pairTestData.getSecond(), (x, y) -> {
+                        var tempModel = new MLP(inputColumns.length,
+                                Layer.sigmoid(numberOfClasses),
+                                Layer.mle(100, OutputFunction.SIGMOID),
+                                Layer.mle(150, OutputFunction.SIGMOID),
+                                Layer.mle(1, OutputFunction.SIGMOID)
 
-        var classificationValidation = ClassificationValidation.of(
-                pairTrainingData.getFirst(), pairTrainingData.getSecond(), pairTestData.getFirst(), pairTestData.getSecond(), (x, y) -> {
-                    var tempModel = new MLP(inputColumns.length,
-                            Layer.sigmoid(numberOfClasses),
-                            Layer.mle(100, OutputFunction.SIGMOID),
-                            Layer.mle(150, OutputFunction.SIGMOID),
-                            Layer.mle(1, OutputFunction.SIGMOID)
+                        );
+                        tempModel.setLearningRate(TimeFunction.constant(learningRate));
+                        tempModel.setMomentum(TimeFunction.constant(momentum));
+                        tempModel.update(x, y);
+                        return tempModel;
+                    }
+            );
 
-                    );
-                    tempModel.setLearningRate(TimeFunction.constant(learningRate));
-                    tempModel.setMomentum(TimeFunction.constant(momentum));
-                    tempModel.update(x, y);
-                    return tempModel;
-                }
-        );
-
-        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
-        int[] truth = classificationValidation.truth;
-        int[] prediction = classificationValidation.prediction;
-        for (int i = 0; i < truth.length; i++) {
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+            int[] truth = classificationValidation.truth;
+            int[] prediction = classificationValidation.prediction;
+            for (int i = 0; i < truth.length; i++) {
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
+            System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
         }
-        System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
-
     }
 
     private Pair<double[][], int[]> getDataFrameAsArray(DataFrame dataFrame) {
@@ -221,27 +226,32 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
         return new Pair<>(input, result);
     }
 
-    private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
-        var trainingData = CsvReader.read(path, formula);
+    private List<DataFrame> getDataFrameReady(List<String> pathList, String phase) throws IOException, URISyntaxException {
 
-        this.stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
-        this.byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
+        List<DataFrame> constructedDataFrame = new ArrayList<>();
+        for (String path: pathList) {
+            var trainingData = CsvReader.read(path, formula);
 
-        var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
-        byteOnlyData = formula.frame(byteOnlyData);
+            this.stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
+            this.byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
 
-        LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
-        for (var pair : predicatePerColumn) {
-            byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
+            byteOnlyData = formula.frame(byteOnlyData);
+
+            LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
+            for (var pair : predicatePerColumn) {
+                byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            }
+            LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
+
+            byteOnlyData = formula.frame(byteOnlyData);
+
+            LoggingUtils.print("Schema: " + byteOnlyData.schema());
+            LoggingUtils.print("Formula: " + formula);
+
+            constructedDataFrame.add(byteOnlyData);
         }
-        LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
-
-        byteOnlyData = formula.frame(byteOnlyData);
-
-        LoggingUtils.print("Schema: " + byteOnlyData.schema());
-        LoggingUtils.print("Formula: " + formula);
-
-        return byteOnlyData;
+        return constructedDataFrame;
     }
 
 

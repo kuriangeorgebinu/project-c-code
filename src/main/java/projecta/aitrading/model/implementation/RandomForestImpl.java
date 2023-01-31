@@ -20,10 +20,7 @@ import smile.validation.ClassificationValidation;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.text.MessageFormat;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.function.Predicate;
 
 public class RandomForestImpl implements BaseModel {
@@ -38,8 +35,8 @@ public class RandomForestImpl implements BaseModel {
     // initialized in static initialisation block
     public static final long[] seeds;
 
-    private final String trainingPath;
-    private final String testingPath;
+    private final List<String> trainingPath;
+    private final List<String> testingPath;
     private final String modelPath;
     private RandomForest model;
     private final List<Pair<String, Predicate<Double>>> predicatePerColumn;
@@ -54,14 +51,14 @@ public class RandomForestImpl implements BaseModel {
     };
 
 
-    public static final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
+    public static final Formula formula = Formula.of("EXECUTE", "Open", "High", "Low", "Close", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
 
 
     public static void main(String... args) {
 
     }
 
-    public RandomForestImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
+    public RandomForestImpl(List<String> trainDataSetPath, List<String> testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
         MathEx.setSeed(19650218);
         this.trainingPath = trainDataSetPath;
         this.testingPath = testDateSetPath;
@@ -79,13 +76,13 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void train() throws IOException, URISyntaxException {
-        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "TRAINING");
-
-        var forest = RandomForest.fit(formula, byteOnlyData, properties);
-
-        LoggingUtils.print("Model metrics: " + forest.metrics());
-        this.model = forest;
-
+        List<DataFrame> trainingDataList = getDataFrameReady(trainingPath, "TRAINING");
+        for (DataFrame byteOnlyData: trainingDataList) {
+            System.out.println(byteOnlyData);
+            var forest = RandomForest.fit(formula, byteOnlyData, properties);
+            LoggingUtils.print("Model metrics: " + forest.metrics());
+            this.model = forest;
+        }
         //Saves model after fitting
         RandomForestModelSerializer modelSerializer = new RandomForestModelSerializer(this.model);
         saveModelToFile(modelSerializer);
@@ -110,23 +107,22 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void test() throws IOException, URISyntaxException {
-        var dataFrame = getDataFrameReady(testingPath, "TEST");
-        var predictedStr = new String[dataFrame.size()];
-        var actualStr = new String[dataFrame.size()];
-
-        for (int i = 0; i < dataFrame.size(); i++) {
-            var row = dataFrame.get(i);
-            System.out.println(row);
-            var prediction = model.predict(row);
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
-            predictedStr[i] = predictedStringCategory;
-            actualStr[i] = actualStringCategory;
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+        var dataFrameList = getDataFrameReady(testingPath, "TEST");
+        for (DataFrame dataFrame: dataFrameList) {
+            var predictedStr = new String[dataFrame.size()];
+            var actualStr = new String[dataFrame.size()];
+            for (int i = 0; i < dataFrame.size(); i++) {
+                var row = dataFrame.get(i);
+                var prediction = model.predict(row);
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
+                predictedStr[i] = predictedStringCategory;
+                actualStr[i] = actualStringCategory;
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
+            var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
+            LoggingUtils.print(confusionMatrix.toString());
         }
-
-        var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
-        LoggingUtils.print(confusionMatrix.toString());
     }
 
     /**
@@ -136,48 +132,54 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
-        DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
 
 
-        var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
-                (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 2, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
-        );
+        List<DataFrame> trainingDataList = getDataFrameReady(trainingPath, "Evaluation");
+        List<DataFrame> testingDataList = getDataFrameReady(testingPath, "Evaluation");
 
-        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
-        int[] truth = classificationValidation.truth;
-        int[] prediction = classificationValidation.prediction;
-        for (int i = 0; i < truth.length; i++) {
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+        for (int j=0; j < trainingDataList.size(); j++) {
+            DataFrame byteOnlyTrainingData = trainingDataList.get(j);
+            DataFrame byteOnlyTestData = testingDataList.get(j);
+            var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
+                    (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 2, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
+            );
+
+            LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+            int[] truth = classificationValidation.truth;
+            int[] prediction = classificationValidation.prediction;
+            for (int i = 0; i < truth.length; i++) {
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
+            System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
         }
-        System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
     }
 
-    private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
-        var trainingData = CsvReader.read(path, formula);
-        System.out.println("TRAINING_DATA: "+trainingData);
+    private List<DataFrame> getDataFrameReady(List<String> paths, String phase) throws IOException, URISyntaxException {
+        List<DataFrame> constructedDataFrames = new ArrayList<>();
+        for (String path: paths) {
+            var trainingData = CsvReader.read(path, formula);
+            stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
+            byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
 
-        stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
-        byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
+            var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
+            byteOnlyData = formula.frame(byteOnlyData);
 
-        var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
-        byteOnlyData = formula.frame(byteOnlyData);
+            LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
+            for (var pair : predicatePerColumn) {
+                byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            }
+            LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
 
+            byteOnlyData = formula.frame(byteOnlyData);
 
-        LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
-        for (var pair : predicatePerColumn) {
-            byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            LoggingUtils.print("Schema: " + byteOnlyData.schema());
+            LoggingUtils.print("Formula: " + formula);
+
+            constructedDataFrames.add(byteOnlyData);
         }
-        LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
-
-        byteOnlyData = formula.frame(byteOnlyData);
-
-        LoggingUtils.print("Schema: " + byteOnlyData.schema());
-        LoggingUtils.print("Formula: " + formula);
-
-        return byteOnlyData;
+        return constructedDataFrames;
     }
 
     /**

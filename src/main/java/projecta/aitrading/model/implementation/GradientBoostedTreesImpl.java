@@ -19,6 +19,7 @@ import smile.validation.ClassificationValidation;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.text.MessageFormat;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -36,8 +37,8 @@ public class GradientBoostedTreesImpl implements BaseModel {
     // initialized in static initialisation block
     public static final long[] seeds;
 
-    private final String trainingPath;
-    private final String testingPath;
+    private final List<String> trainingPath;
+    private final List<String> testingPath;
     private final String modelPath;
     private GradientTreeBoost model;
     private final List<Pair<String, Predicate<Double>>> predicatePerColumn;
@@ -51,14 +52,14 @@ public class GradientBoostedTreesImpl implements BaseModel {
             "Tesla6", "Tesla9", "Decision"
     };
 
-    public static final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
+    public static final Formula formula = Formula.of("EXECUTE", "Open", "High", "Low", "Close", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
 
 
     public static void main(String... args) {
 
     }
 
-    public GradientBoostedTreesImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
+    public GradientBoostedTreesImpl(List<String> trainDataSetPath, List<String> testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
         MathEx.setSeed(19650218);
         this.trainingPath = trainDataSetPath;
         this.testingPath = testDateSetPath;
@@ -75,9 +76,10 @@ public class GradientBoostedTreesImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void train() throws IOException, URISyntaxException {
-        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "TRAINING");
-
-        this.model = GradientTreeBoost.fit(formula, byteOnlyData, properties);
+        List<DataFrame> dataFramesList = getDataFrameReady(trainingPath, "TRAINING");
+        for (DataFrame byteOnlyData: dataFramesList) {
+            this.model = GradientTreeBoost.fit(formula, byteOnlyData, properties);
+        }
         //Saves model after training
         GradientBoostSerializer gradientBoostSerializer = new GradientBoostSerializer(this.model);
         saveModelToFile(gradientBoostSerializer);
@@ -117,27 +119,28 @@ public class GradientBoostedTreesImpl implements BaseModel {
     public void test() throws IOException, URISyntaxException {
         // create confusion matrix
 
-        var dataFrame = getDataFrameReady(testingPath, "TEST");
+        var dataFrameList = getDataFrameReady(testingPath, "TEST");
+        for (DataFrame dataFrame: dataFrameList) {
+            var predictedStr = new String[dataFrame.size()];
+            var actualStr = new String[dataFrame.size()];
 
-        var predictedStr = new String[dataFrame.size()];
-        var actualStr = new String[dataFrame.size()];
+            GradientBoostSerializer gradientBoostSerializer = (GradientBoostSerializer) readObjectFromFile(this.modelPath);
+            assert gradientBoostSerializer != null;
+            this.model = gradientBoostSerializer.getGradientTreeBoost();
 
-        GradientBoostSerializer gradientBoostSerializer = (GradientBoostSerializer) readObjectFromFile(this.modelPath);
-        assert gradientBoostSerializer != null;
-        this.model = gradientBoostSerializer.getGradientTreeBoost();
+            for (int i = 0; i < dataFrame.size(); i++) {
+                var row = dataFrame.get(i);
+                var prediction = model.predict(row);
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
+                predictedStr[i] = predictedStringCategory;
+                actualStr[i] = actualStringCategory;
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
 
-        for (int i = 0; i < dataFrame.size(); i++) {
-            var row = dataFrame.get(i);
-            var prediction = model.predict(row);
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
-            predictedStr[i] = predictedStringCategory;
-            actualStr[i] = actualStringCategory;
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
+            LoggingUtils.print(confusionMatrix.toString());
         }
-
-        var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
-        LoggingUtils.print(confusionMatrix.toString());
     }
 
     /**
@@ -147,48 +150,55 @@ public class GradientBoostedTreesImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
-        DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
+        List<DataFrame> trainingDataList = getDataFrameReady(trainingPath, "Evaluation");
+        List<DataFrame> testingDataList = getDataFrameReady(testingPath, "Evaluation");
+        for (int j = 0; j < trainingDataList.size(); j++) {
+            DataFrame byteOnlyTrainingData = trainingDataList.get(j);
+            DataFrame byteOnlyTestData = testingDataList.get(j);
+            var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
+                    (f, x) -> GradientTreeBoost.fit(f, x, 100, 2, 10, 1, 1, 1.0)
+            );
 
-        var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
-                (f, x) -> GradientTreeBoost.fit(f, x, 100, 2, 10, 1, 1, 1.0)
-        );
+            LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
 
-        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+            int[] truth = classificationValidation.truth;
+            int[] prediction = classificationValidation.prediction;
 
-        int[] truth = classificationValidation.truth;
-        int[] prediction = classificationValidation.prediction;
+            for (int i = 0; i < truth.length; i++) {
+                var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
+                var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
+                LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            }
 
-        for (int i = 0; i < truth.length; i++) {
-            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
-            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+            System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
         }
-
-        System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
     }
 
-    private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
-        var trainingData = CsvReader.read(path, formula);
+    private List<DataFrame> getDataFrameReady(List<String> pathList, String phase) throws IOException, URISyntaxException {
+        List<DataFrame> preparedDataFrames = new ArrayList<>();
+        for (String path: pathList) {
+            var trainingData = CsvReader.read(path, formula);
 
-        stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
-        byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
+            stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
+            byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
 
-        var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
-        byteOnlyData = formula.frame(byteOnlyData);
+            var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
+            byteOnlyData = formula.frame(byteOnlyData);
 
-        LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
-        for (var pair : predicatePerColumn) {
-            byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
+            for (var pair : predicatePerColumn) {
+                byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+            }
+            LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
+
+            byteOnlyData = formula.frame(byteOnlyData);
+
+            LoggingUtils.print("Schema: " + byteOnlyData.schema());
+            LoggingUtils.print("Formula: " + formula);
+
+            preparedDataFrames.add(byteOnlyData);
         }
-        LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
-
-        byteOnlyData = formula.frame(byteOnlyData);
-
-        LoggingUtils.print("Schema: " + byteOnlyData.schema());
-        LoggingUtils.print("Formula: " + formula);
-
-        return byteOnlyData;
+        return preparedDataFrames;
     }
 
     /**
